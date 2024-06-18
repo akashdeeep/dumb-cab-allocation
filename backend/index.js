@@ -7,11 +7,13 @@ const compression = require("compression");
 const session = require("cookie-session");
 const cors = require("cors");
 const User = require("./models/user");
+const Cab = require("./models/cab");
 const dotenv = require("dotenv");
 const IndexRoutes = require("./routes/routes");
 const CabRoutes = require("./routes/cabroutes");
 const UserRoutes = require("./routes/userroutes");
 const seedDB = require("./seed");
+const { automaticupdate } = require("./controllers/cabcontroller");
 
 dotenv.config();
 const app = express();
@@ -65,6 +67,17 @@ passport.deserializeUser(async (id, done) => {
 
 app.use(IndexRoutes);
 app.use("/cab", CabRoutes);
+
+Cab.find()
+	.then((cabs) => {
+		cabs.forEach((cab) => {
+			automaticupdate(cab._id);
+		});
+	})
+	.catch((err) => {
+		console.log("Error initializing automatic updates", err);
+	});
+
 app.use("/user", UserRoutes);
 app.use((req, res) => {
 	res.status(404).render("404");

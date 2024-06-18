@@ -1,47 +1,64 @@
-const Cab = require('../models/cab');
+const Cab = require("../models/cab");
 
+exports.createcab = (req, res) => {
+	const { latitude, longitude } = req.body;
 
-exports.createcab = (req,res) => {
-    const{latitude,longitude }=req.body;
-    console.log(latitude,longitude);
-    const cabobj =  new Cab({latitude:latitude,longitude:longitude,isCabEmpty:true});
-    cabobj.save().then((item) => {
-        res.json({
-            success:true,
-            message:'Suceesfully cab added',
-            data: item
-        })
-    }).catch((err) => {
-        console.log('Error',err);
-        return res.status(400).json({
-            error:'Error'
-        });
-    })
-}
+	if (!latitude || !longitude) {
+		return res.status(400).json({ error: "Missing required fields" });
+	}
+
+	const cabobj = new Cab({ latitude, longitude, isCabEmpty: true });
+	cabobj
+		.save()
+		.then((item) => {
+			// Start automatic update for the new cab
+			exports.automaticupdate(item._id);
+			res.json({
+				success: true,
+				message: "Successfully added cab",
+				data: item,
+			});
+		})
+		.catch((err) => {
+			console.error("Error", err);
+			res.status(500).json({ error: "Internal Server Error" });
+		});
+};
 
 const change = 0.00002;
 
-exports.automaticupdate = async (cabId) => {
-   setInterval(() => {
-    Cab.findByIdAndUpdate(cabId,{$inc: {latitude:change,longitude:change}}, {new: true}).exec().catch((err)=>{
-        console.log(err);
-    })
-   },2000);
-}
+exports.automaticupdate = (cabId) => {
+	setInterval(() => {
+		Cab.findByIdAndUpdate(
+			cabId,
+			{ $inc: { latitude: change, longitude: change } },
+			{ new: true }
+		)
+			.exec()
+			.then((updatedCab) => {
+				console.log(
+					`Cab ID: ${cabId} - New Location: Latitude ${updatedCab.latitude}, Longitude ${updatedCab.longitude}`
+				);
+			})
+			.catch((err) => {
+				console.error(`Error updating cab location for Cab ID: ${cabId}`, err);
+			});
+	}, 2000); // Update every 2 seconds
+};
 
-
-
-exports.updatecablocation = (req,res) =>{
-    const {latitude,longitude,cabId} = req.body;
-    Cab.findByIdAndUpdate(cabId, {$set: {latitude,longitude}}, {new: true}).exec().then((cabdata) => {
-        res.json({
-            success:true,
-            message:'Suceesfully updated cab location'
-        })
-
-    }).catch((err) => {
-        return res.status(400).json({
-            error:'Error'
-        });
-    })
-}
+exports.updatecablocation = (req, res) => {
+	const { latitude, longitude, cabId } = req.body;
+	Cab.findByIdAndUpdate(cabId, { $set: { latitude, longitude } }, { new: true })
+		.exec()
+		.then((cabdata) => {
+			res.json({
+				success: true,
+				message: "Suceesfully updated cab location",
+			});
+		})
+		.catch((err) => {
+			return res.status(400).json({
+				error: "Error",
+			});
+		});
+};

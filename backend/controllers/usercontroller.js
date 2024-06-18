@@ -3,125 +3,140 @@ const Cab = require("../models/cab");
 const geolib = require("geolib");
 const passport = require("passport");
 
+const change = 0.00002;
+const thresholdDis = 500000;
+const maxcabs = 3;
+
 exports.booknearestcab = async (req, res) => {
-	const { latitude: latitude, longitude: longitude, userId: userId } = req.body;
-	console.log(req.user);
-	let minDis = Infinity;
-	let cabID = null;
-	for await (const doc of Cab.find()) {
-		let cabdistance = geolib.getDistance(
-			{ latitude: latitude, longitude: longitude },
-			{ latitude: doc.latitude, longitude: doc.longitude }
-		);
-		if (cabdistance < minDis) {
-			minDis = cabdistance;
-			cabID = doc._id;
-		}
-		console.log(doc);
+	const { latitude, longitude, userId } = req.body;
+
+	if (!latitude || !longitude || !userId) {
+		return res.status(400).json({ error: "Missing required fields" });
 	}
-	//return error id minDis is Infinity
-	User.findByIdAndUpdate(
-		userId,
-		{ $set: { assignedCabId: cabID } },
-		{ new: true }
-	)
-		.exec()
-		.then(() => {
-			return Cab.findByIdAndUpdate(
-				cabID,
-				{ $set: { isCabEmpty: false } },
-				{ new: true }
-			).exec();
-		})
-		.then((cabdata) => {
-			res.json({
-				success: true,
-				message: "Suceesfully assigned nearest cab",
-				data: cabdata,
-			});
-		})
-		.catch((err) => {
-			res.status(400).json({
-				error: "Error",
-			});
+
+	try {
+		let minDis = Infinity;
+		let cabID = null;
+
+		const cabs = await Cab.find({ isCabEmpty: true });
+		if (!cabs.length) {
+			return res.status(404).json({ error: "No available cabs" });
+		}
+
+		cabs.forEach((doc) => {
+			const cabDistance = geolib.getDistance(
+				{ latitude, longitude },
+				{ latitude: doc.latitude, longitude: doc.longitude }
+			);
+			if (cabDistance < minDis) {
+				minDis = cabDistance;
+				cabID = doc._id;
+			}
 		});
+
+		if (minDis === Infinity) {
+			return res.status(404).json({ error: "No available cabs nearby" });
+		}
+
+		const user = await User.findByIdAndUpdate(
+			userId,
+			{ $set: { assignedCabId: cabID } },
+			{ new: true }
+		).exec();
+		if (!user) {
+			return res.status(404).json({ error: "User not found" });
+		}
+
+		const cab = await Cab.findByIdAndUpdate(
+			cabID,
+			{ $set: { isCabEmpty: false } },
+			{ new: true }
+		).exec();
+		res.json({
+			success: true,
+			message: "Successfully assigned nearest cab",
+			data: cab,
+		});
+	} catch (err) {
+		console.error("Error", err);
+		res.status(500).json({ error: "Internal Server Error" });
+	}
 };
 
-const thresholdDis = 500000;
-const maxcabs = 10;
-
 exports.shownearbycabs = async (req, res) => {
-	console.log(req.body);
-	const { latitude: latitude, longitude: longitude } = req.body;
-	const nearbyCabs = [];
-	const temp = await Cab.find();
-	console.log(temp);
-	for (const doc of temp) {
-		console.log("doc is", doc);
-		let cabdistance = geolib.getDistance(
-			{ latitude: latitude, longitude: longitude },
-			{ latitude: doc.latitude, longitude: doc.longitude }
-		);
-		console.log("cabdistance", cabdistance);
-		if (cabdistance <= thresholdDis && doc.isCabEmpty === false) {
-			nearbyCabs.push({
-				cabId: doc._id,
-				latitude: doc.latitude,
-				longitude: doc.longitude,
-			});
-		}
+	const { latitude, longitude } = req.body;
+
+	if (!latitude || !longitude) {
+		return res.status(400).json({ error: "Missing required fields" });
 	}
-	console.log("nearbyCabs", nearbyCabs);
-	res.json({
-		success: true,
-		message: "Suceesfully fetched nearest cab",
-		data: nearbyCabs,
-	});
+
+	try {
+		const cabs = await Cab.find({ isCabEmpty: true });
+		const nearbyCabs = cabs
+			.map((doc) => {
+				const cabDistance = geolib.getDistance(
+					{ latitude, longitude },
+					{ latitude: doc.latitude, longitude: doc.longitude }
+				);
+				return {
+					cabId: doc._id,
+					latitude: doc.latitude,
+					longitude: doc.longitude,
+					distance: cabDistance,
+				};
+			})
+			.filter((cab) => cab.distance <= thresholdDis);
+
+		// Sort by distance and take the top maxcabs
+		nearbyCabs.sort((a, b) => a.distance - b.distance);
+		const topNearbyCabs = nearbyCabs.slice(0, maxcabs);
+
+		res.json({
+			success: true,
+			message: "Successfully fetched nearby cabs",
+			data: topNearbyCabs,
+		});
+	} catch (err) {
+		console.error("Error", err);
+		res.status(500).json({ error: "Internal Server Error" });
+	}
 };
 
 exports.registeruser = (req, res) => {
-	const newUser = new User({
-		username: req.body.username,
-	});
-	User.register(newUser, req.body.password)
+	const { username, password } = req.body;
+
+	if (!username || !password) {
+		return res.status(400).json({ error: "Missing required fields" });
+	}
+
+	const newUser = new User({ username });
+	User.register(newUser, password)
 		.then((user) => {
 			passport.authenticate("userlocal")(req, res, () => {
-				res.json({
-					success: true,
-					message: "User successfully registered",
-				});
+				res.json({ success: true, message: "User successfully registered" });
 			});
 		})
 		.catch((err) => {
-			res.status(400).json({
-				error: "Error",
-			});
+			console.error("Error", err);
+			res.status(500).json({ error: "Internal Server Error" });
 		});
 };
 
 exports.loginuser = (req, res, next) => {
 	passport.authenticate("local", (error, user, message) => {
-		console.log("called");
 		if (error) {
-			console.log(error);
-			console.log("in error");
-			res.json({ message: error });
-		} else if (!user) {
-			console.log("in no user");
-			res.json({ message: "No user exists..." });
-		} else {
-			console.log("User found and password matches...");
-			req.login(user, (err) => {
-				if (err) {
-					res.json({ message: "Failed to login" });
-				} else {
-					console.log("Logged in successfully...");
-
-					// console.log("Logged in " + req.isAuthenticated());
-					console.log(req.user);
-					res.json({ success: true, userId: req.user._id });
-				}
-			});
+			console.error("Error", error);
+			return res.status(500).json({ message: "Internal Server Error" });
 		}
+		if (!user) {
+			return res.status(400).json({ message: "Invalid credentials" });
+		}
+		req.login(user, (err) => {
+			if (err) {
+				console.error("Error", err);
+				return res.status(500).json({ message: "Failed to login" });
+			}
+			res.json({ success: true, userId: req.user._id });
+		});
 	})(req, res, next);
 };
